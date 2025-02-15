@@ -10,8 +10,6 @@ from autogen_agentchat.messages import TextMessage
 from autogen_agentchat.teams import MagenticOneGroupChat
 from autogen_core import CancellationToken
 from autogen_core.memory import ListMemory
-
-# from autogen_ext.code_executors.docker import DockerCommandLineCodeExecutor
 from autogen_ext.code_executors.local import LocalCommandLineCodeExecutor
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 
@@ -155,18 +153,14 @@ async def test_web_search_agent():
 
 async def create_code_executor_agent(work_dir: str = "coding", timeout: int = 30):
     try:
-        # code_executor = DockerCommandLineCodeExecutor(
-        #     work_dir=work_dir, timeout=timeout
-        # )
         code_executor = LocalCommandLineCodeExecutor(work_dir=work_dir, timeout=timeout)
-        # await code_executor.start()
 
         code_executor_agent = CodeExecutorAgent(
             name="code_executor_agent",
             code_executor=code_executor,
             description="Code Executor Agent: This agent executes Python code snippets. Provide Python code within ```python blocks and it will run the code in a Docker container and return the output.",
         )
-        return code_executor_agent, code_executor
+        return code_executor_agent
     except Exception as e:
         logger.exception("Error creating code executor agent: %s", e)
         raise
@@ -177,10 +171,9 @@ async def test_code_executor_agent():
     Test function to verify the code executor agent's functionality.
     """
     code_executor_agent = None
-    code_executor = None
 
     try:
-        code_executor_agent, code_executor = await create_code_executor_agent()
+        code_executor_agent = await create_code_executor_agent()
 
         test_message = TextMessage(
             content='''Here's a Python script to calculate compound interest:
@@ -297,7 +290,7 @@ async def test_financial_team():
     try:
         web_search_agent = await create_web_search_agent(PERPLEXITY_API_KEY)
         code_writer_agent = await create_code_writer_agent()
-        code_executor_agent, code_executor = await create_code_executor_agent()
+        code_executor_agent = await create_code_executor_agent()
 
         team = await create_financial_team(
             web_search_agent, code_writer_agent, code_executor_agent

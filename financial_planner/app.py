@@ -434,7 +434,7 @@ async def infer(request: Request):
 
         web_search_agent = await create_web_search_agent(PERPLEXITY_API_KEY)
         code_writer_agent = await create_code_writer_agent()
-        code_executor_agent, code_executor = await create_code_executor_agent()
+        code_executor_agent = await create_code_executor_agent()
         team = await create_financial_team(
             web_search_agent, code_writer_agent, code_executor_agent
         )
