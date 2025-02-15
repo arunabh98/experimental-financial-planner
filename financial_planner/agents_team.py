@@ -18,7 +18,7 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 from financial_planner import PERPLEXITY_API_KEY, display_terminal
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.WARNING)
 
 
 def perplexity_search(query: str, api_key: str, max_retries: int = 3) -> str:
