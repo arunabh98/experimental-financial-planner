@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "financial-planner"
+version = "0.1.0"
+description = ""
+authors = ["Arunabh Ghosh <arunabhghosh98@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+autogen-agentchat = "^0.4.5"
+autogen-ext = {extras = ["docker"], version = "^0.4.5"}
+python-dotenv = "^1.0.1"
+black = "^25.1.0"
+isort = "^6.0.0"
+asyncio = "^3.4.3"
+tiktoken = "^0.8.0"
+openai = "^1.61.1"
+ruff = "^0.9.4"
+rich = "^13.9.4"
+fastapi = "^0.115.8"
+uvicorn = "^0.34.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
