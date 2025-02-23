@@ -4,6 +4,24 @@ call_id_map = {}
 css_added = False
 
 
+EVENT_TYPE_DISPLAY_NAMES = {
+    "TextMessage": "Message",
+    "ToolCallRequestEvent": "Tool Request",
+    "ToolCallExecutionEvent": "Tool Response",
+    "TaskResult": "Final Result",
+}
+
+
+SOURCE_DISPLAY_NAMES = {
+    "user": "You",
+    "MagenticOneOrchestrator": "Team Coordinator",
+    "financial_advisor_agent": "Financial Advisor",
+    "web_search_agent": "Market Researcher",
+    "code_writer_agent": "Code Writer",
+    "code_executor_agent": "Code Executor",
+}
+
+
 def get_base_css() -> str:
     return """
         <style>
@@ -201,12 +219,14 @@ def stringify_event(event: object) -> str:
     html.append(f"<div class='{css_class}' style='position: relative;'>")
     html.append("<div class='event-meta'>")
     html.append(f"<span class='event-icon'>{icon_html}</span>")
-    html.append(f"<span class='event-type'>{escape_html(event_type)}</span>")
+    friendly_name = EVENT_TYPE_DISPLAY_NAMES.get(event_type, event_type)
+    html.append(f"<span class='event-type'>{escape_html(friendly_name)}</span>")
     html.append("</div>")
 
     if source:
+        friendly_source = SOURCE_DISPLAY_NAMES.get(source, source)
         html.append(
-            f"<div class='event-meta'><span>Source:</span> {escape_html(source)}</div>"
+            f"<div class='event-meta'><span>From:</span> {escape_html(friendly_source)}</div>"
         )
     if target:
         html.append(

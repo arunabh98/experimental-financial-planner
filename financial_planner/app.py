@@ -9,6 +9,7 @@ from financial_planner import PERPLEXITY_API_KEY
 from financial_planner.agents_team import (
     create_code_executor_agent,
     create_code_writer_agent,
+    create_financial_advisor_agent,
     create_financial_team,
     create_web_search_agent,
 )
@@ -358,8 +359,13 @@ async def infer(request: Request):
         web_search_agent = await create_web_search_agent(PERPLEXITY_API_KEY)
         code_writer_agent = await create_code_writer_agent()
         code_executor_agent = await create_code_executor_agent()
+        financial_advisor_agent = await create_financial_advisor_agent()
+
         team = await create_financial_team(
-            web_search_agent, code_writer_agent, code_executor_agent
+            web_search_agent,
+            code_writer_agent,
+            code_executor_agent,
+            financial_advisor_agent,
         )
 
         async def event_generator() -> AsyncGenerator[str, None]:

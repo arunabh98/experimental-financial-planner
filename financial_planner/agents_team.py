@@ -12,8 +12,15 @@ from autogen_core import CancellationToken
 from autogen_core.memory import ListMemory
 from autogen_ext.code_executors.local import LocalCommandLineCodeExecutor
 from autogen_ext.models.openai import OpenAIChatCompletionClient
+from autogen_ext.models.semantic_kernel import SKChatCompletionAdapter
+from semantic_kernel import Kernel
+from semantic_kernel.connectors.ai.anthropic import (
+    AnthropicChatCompletion,
+    AnthropicChatPromptExecutionSettings,
+)
+from semantic_kernel.memory.null_memory import NullMemory
 
-from financial_planner import PERPLEXITY_API_KEY, display_terminal
+from financial_planner import ANTHROPIC_API_KEY, PERPLEXITY_API_KEY, display_terminal
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
@@ -267,51 +274,121 @@ async def test_code_writer_agent():
         raise
 
 
+async def create_financial_advisor_agent():
+    financial_advisor_system_message = """You are a professional financial advisor specializing in providing comprehensive financial guidance. Your role is to:
+
+1. Analyze financial information, market conditions, investment options, and economic trends
+2. Synthesize complex financial data into clear, actionable insights
+3. Consider each situation's specific context, goals, and risk factors
+4. Provide well-reasoned financial recommendations based on available information
+5. Maintain high ethical standards by:
+   - Distinguishing between general and personalized advice
+   - Explaining the reasoning behind recommendations
+   - Identifying potential risks and trade-offs
+   - Acknowledging information limitations
+   - Recommending professional consultation when appropriate"""
+
+    financial_advisor_description = "Financial Advisor Agent: A financial advisor that analyzes financial information and market data to provide personalized recommendations. This agent offers thorough analysis while maintaining high ethical standards in financial advising."
+
+    financial_advisor_memory = ListMemory(name="financial_advisor_memory")
+
+    anthropic_client = AnthropicChatCompletion(
+        ai_model_id="claude-3-5-sonnet-20241022", api_key=ANTHROPIC_API_KEY
+    )
+    settings = AnthropicChatPromptExecutionSettings(temperature=0.0)
+    sk_kernel = Kernel(memory=NullMemory())
+    claude_3_5_sonnet_client = SKChatCompletionAdapter(
+        anthropic_client, kernel=sk_kernel, prompt_settings=settings
+    )
+
+    financial_advisor_agent = AssistantAgent(
+        name="financial_advisor_agent",
+        model_client=claude_3_5_sonnet_client,
+        system_message=financial_advisor_system_message,
+        description=financial_advisor_description,
+        memory=[financial_advisor_memory],
+    )
+
+    return financial_advisor_agent
+
+
+async def test_financial_advisor_agent():
+    try:
+        agent = await create_financial_advisor_agent()
+
+        test_message = TextMessage(
+            content=(
+                "I have $50,000 saved and I'm a mid-career professional with moderate risk tolerance. "
+                "Considering current market conditions, what diversified investment strategies would you recommend for long-term growth?"
+            ),
+            source="user",
+        )
+
+        token = CancellationToken()
+
+        print("Sending query to the financial advisor agent...")
+        response = await agent.on_messages([test_message], token)
+
+        print("Financial Advisor Agent Response:\n", response.chat_message.content)
+        return response
+
+    except Exception as e:
+        logger.exception("Error during financial advisor agent test: %s", e)
+        raise
+
+
 async def create_financial_team(
     web_search_agent: AssistantAgent,
     code_writer_agent: AssistantAgent,
     code_executor_agent: CodeExecutorAgent,
+    financial_advisor_agent: AssistantAgent,
 ):
     termination_condition = MaxMessageTermination(max_messages=30)
 
+    final_answer_prompt = """Based on the team's conversation, provide a clear and comprehensive response that addresses the user's question or task. Synthesize insights from web research, calculations, and expert analysis into a natural, well-flowing response. Include relevant data and code results where helpful, explain any important caveats or risks, and ensure complex concepts are explained in accessible language. Keep the tone professional but conversational."""
+
     team = MagenticOneGroupChat(
-        participants=[web_search_agent, code_writer_agent, code_executor_agent],
+        participants=[
+            web_search_agent,
+            code_writer_agent,
+            code_executor_agent,
+            financial_advisor_agent,
+        ],
         termination_condition=termination_condition,
         model_client=OpenAIChatCompletionClient(model="gpt-4o", timeout=60),
+        final_answer_prompt=final_answer_prompt,
     )
 
     return team
 
 
 async def test_financial_team():
-    """
-    Test function to verify the financial team's functionality with a basic query.
-    """
     try:
+        # Agent creation
         web_search_agent = await create_web_search_agent(PERPLEXITY_API_KEY)
         code_writer_agent = await create_code_writer_agent()
         code_executor_agent = await create_code_executor_agent()
+        financial_advisor_agent = await create_financial_advisor_agent()
 
         team = await create_financial_team(
-            web_search_agent, code_writer_agent, code_executor_agent
+            web_search_agent,
+            code_writer_agent,
+            code_executor_agent,
+            financial_advisor_agent,
         )
 
         test_message = TextMessage(
-            content=("Should I invest in VOO?"),
+            content="Should I invest in VOO?",
             source="user",
         )
 
         token = CancellationToken()
         print("Sending query to financial team...")
 
-        try:
-            async for event in team.run_stream(
-                task=[test_message], cancellation_token=token
-            ):
-                display_terminal.pretty_print_event(event)
-        except Exception as e:
-            logger.error(f"Error during team execution: {e}")
-            raise
+        async for event in team.run_stream(
+            task=[test_message], cancellation_token=token
+        ):
+            display_terminal.pretty_print_event(event)
 
     except Exception as e:
         logger.exception("Error during financial team test: %s", e)
@@ -337,6 +414,10 @@ async def run_all_tests():
         # Test Code Writer Agent
         logger.info("Testing Code Writer Agent...")
         await test_code_writer_agent()
+
+        # Test Financial Advisor Agent
+        logger.info("Testing Financial Advisor Agent...")
+        await test_financial_advisor_agent()
 
         # Test Financial Team
         logger.info("Testing Financial Team...")
