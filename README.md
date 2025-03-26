@@ -29,6 +29,7 @@ startup_duration_timeout: "10m"
   - **Web Search Agent:** Retrieves up-to-date financial information via the Perplexity API.
   - **Code Writer Agent:** Generates Python code for financial calculations.
   - **Code Executor Agent:** Executes Python code safely in a Docker container.
+  - **Financial Advisor Agent:** Analyzes data and provides personalized financial recommendations.
   
 - **Interactive Web Interface:**  
   A basic interface built with FastAPI that displays the steps the agents are taking along with the final answer to the user's question.
