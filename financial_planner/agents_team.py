@@ -9,7 +9,7 @@ from autogen_agentchat.conditions import MaxMessageTermination
 from autogen_agentchat.messages import TextMessage
 from autogen_agentchat.teams import MagenticOneGroupChat
 from autogen_core import CancellationToken
-from autogen_core.memory import ListMemory
+from autogen_core.memory import ListMemory, MemoryContent
 from autogen_ext.code_executors.local import LocalCommandLineCodeExecutor
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_ext.models.semantic_kernel import SKChatCompletionAdapter
@@ -29,15 +29,15 @@ logger.setLevel(logging.WARNING)
 def perplexity_search(query: str, api_key: str, max_retries: int = 3) -> str:
     url = "https://api.perplexity.ai/chat/completions"
 
-    system_instructions = """You are a knowledgeable financial assistant. Your job is to answer user queries with factual, precise, and well-researched information relating to financial planning, investments, economic indicators, or general money matters. If the user's query is not strictly financial, you can still provide logical, concise, and accurate details. Always adhere to any requested format. Your answers should be thorough yet easy to understand, enabling users to make informed decisions."""
+    system_instructions = """You are a knowledgeable financial assistant. Answer queries with factual, precise information about finance. Don't mention any follow-up questions - make reasonable assumptions if information is missing. Provide direct, thorough answers in a format that's easy to understand."""
 
     payload = {
-        "model": "sonar-pro",
+        "model": "sonar-reasoning-pro",
         "messages": [
             {"role": "system", "content": system_instructions},
             {"role": "user", "content": query},
         ],
-        "temperature": 0.2,
+        "temperature": 0.1,
         "top_p": 0.9,
         "max_tokens": 8000,
     }
@@ -104,10 +104,12 @@ def perplexity_search(query: str, api_key: str, max_retries: int = 3) -> str:
     return md_output
 
 
-async def create_web_search_agent(api_key: str):
-
+async def create_web_search_agent(api_key: str, shared_memory: ListMemory = None):
     def search_tool(query: str) -> str:
-        return perplexity_search(query, api_key)
+        result = perplexity_search(query, api_key)
+        if result is None:
+            return "Error: Unable to perform the search."
+        return result
 
     def get_current_date() -> str:
         return datetime.datetime.now().strftime("%B %d, %Y")
@@ -115,19 +117,24 @@ async def create_web_search_agent(api_key: str):
     current_date = get_current_date()
     web_search_memory = ListMemory(name="web_search_history")
 
+    memory_list = [web_search_memory]
+    if shared_memory is not None:
+        memory_list.append(shared_memory)
+
     web_search_agent = AssistantAgent(
         name="web_search_agent",
-        model_client=OpenAIChatCompletionClient(model="gpt-4o", timeout=60),
+        model_client=OpenAIChatCompletionClient(
+            model="gpt-4o", timeout=60, temperature=0.0
+        ),
         tools=[search_tool],
         system_message=(
-            f"You are a highly knowledgeable financial analyst. Today is {current_date}. "
-            "Your primary responsibility is to provide accurate, concise, and well-researched answers to user queries "
-            "related to financial planning, investments, and economic indicators. "
-            "You have access to a powerful web search tool to retrieve the latest information."
+            f"You are a financial analyst. Today is {current_date}. Provide accurate, direct answers "
+            "about financial planning and investments. Don't ask clarifying questions - assume missing details. "
+            "Use your web search tool to retrieve and cite the latest information."
         ),
         description="Web Search Agent: Use this agent to retrieve financial information from the web. Provide a query, and it will use the Perplexity API to search and return results in markdown format.",
         reflect_on_tool_use=True,
-        memory=[web_search_memory],
+        memory=memory_list,
     )
 
     return web_search_agent
@@ -138,7 +145,17 @@ async def test_web_search_agent():
     Test function to verify the web search agent's functionality.
     """
     try:
-        agent = await create_web_search_agent(PERPLEXITY_API_KEY)
+        shared_memory = ListMemory(name="financial_profile")
+        await shared_memory.add(
+            MemoryContent(
+                content="Risk tolerance: moderate\nInvestment time horizon: 10 years",
+                mime_type="text/plain",
+            )
+        )
+
+        agent = await create_web_search_agent(
+            PERPLEXITY_API_KEY, shared_memory=shared_memory
+        )
 
         test_message = TextMessage(
             content="What are the current best practices for retirement savings?",
@@ -165,7 +182,7 @@ async def create_code_executor_agent(work_dir: str = "coding", timeout: int = 30
         code_executor_agent = CodeExecutorAgent(
             name="code_executor_agent",
             code_executor=code_executor,
-            description="Code Executor Agent: This agent executes Python code snippets. Provide Python code within ```python blocks and it will run the code in a Docker container and return the output.",
+            description="Code Executor Agent: This agent executes Python code snippets. Should be used after code writer agent generates code to obtain actual numerical results. Provide Python code within ```python blocks and it will run the code locally and return the output.",
         )
         return code_executor_agent
     except Exception as e:
@@ -218,29 +235,30 @@ print(f"Interest Earned: ${earned_interest:,.2f}")
         raise
 
 
-async def create_code_writer_agent():
-    model_client = OpenAIChatCompletionClient(model="gpt-4o", timeout=60)
+async def create_code_writer_agent(shared_memory: ListMemory = None):
+    model_client = OpenAIChatCompletionClient(
+        model="gpt-4o", timeout=60, temperature=0.0
+    )
     code_writer_memory = ListMemory(name="code_writer_memory")
 
+    memory_list = [code_writer_memory]
+    if shared_memory is not None:
+        memory_list.append(shared_memory)
+
     code_writer_system_message = (
-        "You are a skilled financial code writer specializing in Python.  "
-        "Your task is to generate Python code to perform financial calculations based on user requests. "
-        "Follow these steps:\n"
-        "1. Analyze the requirements and briefly state your approach.\n"
-        "2. Generate complete, well-documented Python code using only standard libraries. No complex libraries like numpy. STANDARD LIBRARIES.\n"
-        "3. Include error handling for edge cases (e.g., invalid input, division by zero).\n"
-        "4. Add clear comments explaining any complex calculations or logic.\n"
-        "5. Print results in a clear, formatted way (e.g., using f-strings with appropriate formatting).\n"
-        "6. Validate user inputs where appropriate (e.g., check for non-negative numbers, valid dates).\n"
-        "Enclose all code within Markdown code blocks (`python ... `)."
+        "You are a financial code writer. Generate Python code that solves financial problems. "
+        "Use only standard libraries. Include error handling, comments, and print statements for all results. "
+        "Always assume missing details rather than asking questions. "
+        "Provide working code with standard validation, documentation, and proper markdown formatting. "
+        "Ensure all calculations are displayed when executed."
     )
 
     code_writer_agent = AssistantAgent(
         name="code_writer_agent",
         model_client=model_client,
         system_message=code_writer_system_message,
-        description="Code Writer Agent: This agent writes Python code (using only standard libraries) to perform financial calculations. Ask it to write code (without third-party libraries like numpy) for a specific calculation, and it will generate a Python code snippet within a markdown block.",
-        memory=[code_writer_memory],
+        description="Code Writer Agent: This agent writes Python code (using only standard libraries) to perform financial calculations. Ask it to write code (without third-party libraries like numpy) for a specific calculation, and it will generate a Python code snippet within a markdown block. After code generation, the code executor agent should be used to run the code.",
+        memory=memory_list,
     )
 
     return code_writer_agent
@@ -251,7 +269,15 @@ async def test_code_writer_agent():
     Test function to verify the code writer agent's functionality.
     """
     try:
-        agent = await create_code_writer_agent()
+        shared_memory = ListMemory(name="financial_profile")
+        await shared_memory.add(
+            MemoryContent(
+                content="Risk tolerance: moderate\nAnnual gross income: $120,000.00",
+                mime_type="text/plain",
+            )
+        )
+
+        agent = await create_code_writer_agent(shared_memory=shared_memory)
 
         test_message = TextMessage(
             content=(
@@ -274,52 +300,47 @@ async def test_code_writer_agent():
         raise
 
 
-async def create_financial_advisor_agent():
-    financial_advisor_system_message = """You are a professional financial advisor specializing in providing comprehensive financial guidance. Your role is to:
-
-1. Analyze financial information, market conditions, investment options, and economic trends
-2. Synthesize complex financial data into clear, actionable insights
-3. Consider each situation's specific context, goals, and risk factors
-4. Provide well-reasoned financial recommendations based on available information
-5. Maintain high ethical standards by:
-   - Distinguishing between general and personalized advice
-   - Explaining the reasoning behind recommendations
-   - Identifying potential risks and trade-offs
-   - Acknowledging information limitations
-   - Recommending professional consultation when appropriate"""
+async def create_financial_advisor_agent(shared_memory: ListMemory = None):
+    financial_advisor_system_message = """You are a professional financial advisor. Analyze financial information and provide clear, actionable recommendations. Make reasonable assumptions about missing information rather than asking questions. Keep ethical standards by explaining reasoning, noting risks, and identifying limitations. Present a complete answer based on available information, even if some details are missing.
+    
+    DO NOT ASK FOLLOW UP QUESTIONS."""
 
     financial_advisor_description = "Financial Advisor Agent: A financial advisor that analyzes financial information and market data to provide personalized recommendations. This agent offers thorough analysis while maintaining high ethical standards in financial advising."
 
     financial_advisor_memory = ListMemory(name="financial_advisor_memory")
 
-    anthropic_client = AnthropicChatCompletion(
-        ai_model_id="claude-3-5-sonnet-20241022", api_key=ANTHROPIC_API_KEY
-    )
-    settings = AnthropicChatPromptExecutionSettings(temperature=0.0)
-    sk_kernel = Kernel(memory=NullMemory())
-    claude_3_5_sonnet_client = SKChatCompletionAdapter(
-        anthropic_client, kernel=sk_kernel, prompt_settings=settings
-    )
+    memory_list = [financial_advisor_memory]
+    if shared_memory is not None:
+        memory_list.append(shared_memory)
 
     financial_advisor_agent = AssistantAgent(
         name="financial_advisor_agent",
-        model_client=claude_3_5_sonnet_client,
+        model_client=OpenAIChatCompletionClient(
+            model="gpt-4o", timeout=60, temperature=0.0
+        ),
         system_message=financial_advisor_system_message,
         description=financial_advisor_description,
-        memory=[financial_advisor_memory],
+        memory=memory_list,
     )
-
     return financial_advisor_agent
 
 
 async def test_financial_advisor_agent():
     try:
-        agent = await create_financial_advisor_agent()
+        shared_memory = ListMemory(name="financial_profile")
+        await shared_memory.add(
+            MemoryContent(
+                content="Risk tolerance: moderate\nInvestment time horizon: long-term\nAnnual gross income: $95,000.00",
+                mime_type="text/plain",
+            )
+        )
+
+        agent = await create_financial_advisor_agent(shared_memory=shared_memory)
 
         test_message = TextMessage(
             content=(
-                "I have $50,000 saved and I'm a mid-career professional with moderate risk tolerance. "
-                "Considering current market conditions, what diversified investment strategies would you recommend for long-term growth?"
+                "I have $50,000 saved and I'm a mid-career professional. "
+                "Considering current market conditions, what diversified investment strategies would you recommend for growth?"
             ),
             source="user",
         )
@@ -338,14 +359,57 @@ async def test_financial_advisor_agent():
 
 
 async def create_financial_team(
-    web_search_agent: AssistantAgent,
-    code_writer_agent: AssistantAgent,
-    code_executor_agent: CodeExecutorAgent,
-    financial_advisor_agent: AssistantAgent,
+    perplexity_api_key: str,
+    anthropic_api_key: str,
+    risk_tolerance: str = None,
+    time_horizon: str = None,
+    annual_gross_income: float = None,
 ):
-    termination_condition = MaxMessageTermination(max_messages=30)
+    shared_memory = ListMemory(name="financial_profile")
 
-    final_answer_prompt = """Based on the team's conversation, provide a clear and comprehensive response that addresses the user's question or task. Synthesize insights from web research, calculations, and expert analysis into a natural, well-flowing response. Include relevant data and code results where helpful, explain any important caveats or risks, and ensure complex concepts are explained in accessible language. Keep the tone professional but conversational."""
+    profile_items = []
+
+    if risk_tolerance:
+        profile_items.append(f"Risk tolerance: {risk_tolerance}")
+
+    if time_horizon:
+        profile_items.append(f"Investment time horizon: {time_horizon}")
+
+    if annual_gross_income:
+        profile_items.append(f"Annual gross income: ${annual_gross_income:,.2f}")
+
+    if profile_items:
+        financial_profile = "Client financial profile:\n" + "\n".join(profile_items)
+        await shared_memory.add(
+            MemoryContent(content=financial_profile, mime_type="text/plain")
+        )
+
+    web_search_agent = await create_web_search_agent(
+        perplexity_api_key, shared_memory=shared_memory
+    )
+
+    code_writer_agent = await create_code_writer_agent(shared_memory=shared_memory)
+
+    code_executor_agent = await create_code_executor_agent()
+
+    financial_advisor_agent = await create_financial_advisor_agent(
+        shared_memory=shared_memory
+    )
+
+    anthropic_orchestrator = AnthropicChatCompletion(
+        ai_model_id="claude-3-5-sonnet-20241022", api_key=anthropic_api_key
+    )
+    orchestrator_settings = AnthropicChatPromptExecutionSettings(
+        temperature=0.0, max_tokens=4096
+    )
+    sk_kernel_orchestrator = Kernel(memory=NullMemory())
+    claude_orchestrator_client = SKChatCompletionAdapter(
+        anthropic_orchestrator,
+        kernel=sk_kernel_orchestrator,
+        prompt_settings=orchestrator_settings,
+    )
+
+    termination_condition = MaxMessageTermination(max_messages=30)
 
     team = MagenticOneGroupChat(
         participants=[
@@ -355,8 +419,7 @@ async def create_financial_team(
             financial_advisor_agent,
         ],
         termination_condition=termination_condition,
-        model_client=OpenAIChatCompletionClient(model="gpt-4o", timeout=60),
-        final_answer_prompt=final_answer_prompt,
+        model_client=claude_orchestrator_client,
     )
 
     return team
@@ -364,17 +427,12 @@ async def create_financial_team(
 
 async def test_financial_team():
     try:
-        # Agent creation
-        web_search_agent = await create_web_search_agent(PERPLEXITY_API_KEY)
-        code_writer_agent = await create_code_writer_agent()
-        code_executor_agent = await create_code_executor_agent()
-        financial_advisor_agent = await create_financial_advisor_agent()
-
         team = await create_financial_team(
-            web_search_agent,
-            code_writer_agent,
-            code_executor_agent,
-            financial_advisor_agent,
+            perplexity_api_key=PERPLEXITY_API_KEY,
+            anthropic_api_key=ANTHROPIC_API_KEY,
+            risk_tolerance="moderate",
+            time_horizon="2 years",
+            annual_gross_income=120000.00,
         )
 
         test_message = TextMessage(
@@ -403,21 +461,31 @@ async def run_all_tests():
         result = perplexity_search(query, PERPLEXITY_API_KEY)
         print(result)
 
+        print("\n---\n")
+
         # Test Web Search Agent
         logger.info("Testing Web Search Agent...")
         await test_web_search_agent()
+
+        print("\n---\n")
 
         # Test Code Executor Agent
         logger.info("Testing Code Executor Agent...")
         await test_code_executor_agent()
 
+        print("\n---\n")
+
         # Test Code Writer Agent
         logger.info("Testing Code Writer Agent...")
         await test_code_writer_agent()
 
+        print("\n---\n")
+
         # Test Financial Advisor Agent
         logger.info("Testing Financial Advisor Agent...")
         await test_financial_advisor_agent()
+
+        # print("\n---\n")
 
         # Test Financial Team
         logger.info("Testing Financial Team...")

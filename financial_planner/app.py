@@ -5,14 +5,8 @@ from autogen_core import CancellationToken
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 
-from financial_planner import PERPLEXITY_API_KEY
-from financial_planner.agents_team import (
-    create_code_executor_agent,
-    create_code_writer_agent,
-    create_financial_advisor_agent,
-    create_financial_team,
-    create_web_search_agent,
-)
+from financial_planner import ANTHROPIC_API_KEY, PERPLEXITY_API_KEY
+from financial_planner.agents_team import create_financial_team
 from financial_planner.render_utils import stringify_event
 
 app = FastAPI()
@@ -248,9 +242,36 @@ async def index():
                 <div class="col-md-3">
                     <h4>Ask Your Financial Questions</h4>
                     <form id="chat-form" class="mb-3">
+                        <div class="mb-3">
+                            <label for="risk_tolerance" class="form-label">Risk Tolerance</label>
+                            <select id="risk_tolerance" name="risk_tolerance" class="form-select">
+                                <option value="">Not specified</option>
+                                <option value="low">Low - Safety First</option>
+                                <option value="moderate">Moderate - Balanced Approach</option>
+                                <option value="high">High - Growth Focused</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="time_horizon" class="form-label">Investment Time Horizon</label>
+                            <select id="time_horizon" name="time_horizon" class="form-select">
+                                <option value="">Not specified</option>
+                                <option value="short-term">Short Term (< 2 years)</option>
+                                <option value="medium-term">Medium Term (2-5 years)</option>
+                                <option value="long-term">Long Term (5+ years)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="annual_gross_income" class="form-label">Annual Gross Income (USD)</label>
+                            <input type="number" id="annual_gross_income" name="annual_gross_income" class="form-control" placeholder="e.g., 75000">
+                        </div>
+                        
                         <div class="mb-4">
+                            <label for="query" class="form-label">Your Financial Question</label>
                             <textarea id="query" name="query" class="form-control" rows="5" placeholder="Type your financial question here..." aria-label="Enter your financial question"></textarea>
                         </div>
+                        
                         <button type="submit" class="btn btn-custom" aria-label="Send your financial query">
                             <i class="bi bi-send me-2"></i>Send Query
                         </button>
@@ -293,20 +314,32 @@ async def index():
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             const query = queryEl.value.trim();
+            const riskTolerance = document.getElementById('risk_tolerance').value;
+            const timeHorizon = document.getElementById('time_horizon').value;
+            const annualGrossIncome = document.getElementById('annual_gross_income').value;
+            
             const output = document.getElementById('output');
             const loading = document.getElementById('loading');
             output.innerHTML = "";
+            
             if (!query) {
                 output.innerHTML = "<div class='text-danger'>Please enter a query before submitting.</div>";
                 return;
             }
+            
             loading.classList.add('loading-active');
             output.style.display = 'none';
+            
             try {
                 const response = await fetch('/infer', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query })
+                    body: JSON.stringify({ 
+                        query,
+                        risk_tolerance: riskTolerance,
+                        time_horizon: timeHorizon,
+                        annual_gross_income: annualGrossIncome
+                    })
                 });
                 if (!response.ok) {
                     loading.classList.remove('loading-active');
@@ -352,28 +385,43 @@ async def infer(request: Request):
     try:
         body = await request.json()
         query = body.get("query", "").strip()
+
+        risk_tolerance = body.get("risk_tolerance")
+        time_horizon = body.get("time_horizon")
+        annual_gross_income = body.get("annual_gross_income")
+
         if not query:
             raise HTTPException(
                 status_code=400, detail="Missing 'query' in request JSON."
             )
-        web_search_agent = await create_web_search_agent(PERPLEXITY_API_KEY)
-        code_writer_agent = await create_code_writer_agent()
-        code_executor_agent = await create_code_executor_agent()
-        financial_advisor_agent = await create_financial_advisor_agent()
+
+        enhanced_query = f"{query}\n\n---\n\nPlease don't ask any follow up questions. Make reasonable assumptions and provide the best possible answer."
 
         team = await create_financial_team(
-            web_search_agent,
-            code_writer_agent,
-            code_executor_agent,
-            financial_advisor_agent,
+            perplexity_api_key=PERPLEXITY_API_KEY,
+            anthropic_api_key=ANTHROPIC_API_KEY,
+            risk_tolerance=risk_tolerance,
+            time_horizon=time_horizon,
+            annual_gross_income=(
+                float(annual_gross_income) if annual_gross_income else None
+            ),
         )
 
         async def event_generator() -> AsyncGenerator[str, None]:
             try:
                 async for event in team.run_stream(
-                    task=[TextMessage(content=query, source="user")],
+                    task=[TextMessage(content=enhanced_query, source="user")],
                     cancellation_token=CancellationToken(),
                 ):
+                    if (
+                        event.__class__.__name__ == "TextMessage"
+                        and getattr(event, "source", None) == "user"
+                    ):
+                        continue
+
+                    if event.__class__.__name__ == "MemoryQueryEvent":
+                        continue
+
                     yield stringify_event(event)
             except Exception as e:
                 yield f"<div class='event-block bg-danger text-white'><strong>ERROR:</strong> {str(e)}</div>"
