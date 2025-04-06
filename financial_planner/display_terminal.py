@@ -2,12 +2,14 @@ import logging
 import re
 
 from autogen_agentchat.messages import (
+    MemoryQueryEvent,
     TextMessage,
     ToolCallExecutionEvent,
     ToolCallRequestEvent,
     ToolCallSummaryMessage,
 )
 from autogen_core import FunctionCall
+from autogen_core.memory import MemoryContent
 from autogen_core.models import FunctionExecutionResult
 from rich.console import Console
 from rich.panel import Panel
@@ -78,6 +80,11 @@ def format_message(message: object) -> list[str]:
             )
         else:
             lines.append(f"    Content: {message.content}")
+    elif isinstance(message, (MemoryQueryEvent)):
+        lines.append(f"    Memory Operation: {message.__class__.__name__}")
+        memory_content = getattr(message, "content", [])
+        for item in memory_content:
+            lines.append(format_memory_content(item))
     else:
         logger.warning(f"Unknown message type in TaskResult: {type(message)}")
         lines.extend(
@@ -87,6 +94,12 @@ def format_message(message: object) -> list[str]:
             ]
         )
     return lines
+
+
+def format_memory_content(item):
+    if isinstance(item, MemoryContent):
+        return f"    - Memory Content: {item.content[:100]}{'...' if len(item.content) > 100 else ''} (Type: {item.mime_type})"
+    return f"    - {item}"
 
 
 def format_generic_event(event: object) -> list[str]:
@@ -110,6 +123,8 @@ def format_generic_event(event: object) -> list[str]:
                     lines.append(
                         f"    - Execution Result (Call ID: {item.call_id}): {item.content}"
                     )
+                elif isinstance(item, MemoryContent):
+                    lines.append(format_memory_content(item))
                 else:
                     logger.warning(f"Unknown content list item type: {type(item)}")
                     lines.append(f"    - Unknown item: {item}")
