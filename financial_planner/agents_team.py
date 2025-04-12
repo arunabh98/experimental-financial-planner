@@ -10,7 +10,7 @@ from autogen_agentchat.messages import TextMessage
 from autogen_agentchat.teams import MagenticOneGroupChat
 from autogen_core import CancellationToken
 from autogen_core.memory import ListMemory, MemoryContent
-from autogen_ext.code_executors.local import LocalCommandLineCodeExecutor
+from autogen_ext.code_executors.docker import DockerCommandLineCodeExecutor
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_ext.models.semantic_kernel import SKChatCompletionAdapter
 from semantic_kernel import Kernel
@@ -19,21 +19,51 @@ from semantic_kernel.connectors.ai.anthropic import (
     AnthropicChatPromptExecutionSettings,
 )
 from semantic_kernel.memory.null_memory import NullMemory
+from tzlocal import get_localzone
 
 from financial_planner import ANTHROPIC_API_KEY, PERPLEXITY_API_KEY, display_terminal
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 
-
 def get_current_date() -> str:
-    return datetime.datetime.now().strftime("%B %d, %Y")
+    local_tz = get_localzone()
+    now_aware = datetime.datetime.now(local_tz)
+    return now_aware.strftime("%A, %B %d, %Y at %I:%M:%S %p %Z (%z)")
+
+
+def format_enhanced_query(
+    query, risk_tolerance=None, time_horizon=None, annual_gross_income=None
+):
+    current_date = get_current_date()
+
+    enhanced_query = f"Today is {current_date}.\n\n" + query.strip()
+
+    financial_profile = []
+    if risk_tolerance:
+        financial_profile.append(f"Risk tolerance: {risk_tolerance}")
+    if time_horizon:
+        financial_profile.append(f"Investment time horizon: {time_horizon}")
+    if annual_gross_income is not None:
+        financial_profile.append(
+            f"Annual gross income: ${float(annual_gross_income):,.2f}"
+        )
+
+    if financial_profile:
+        profile_text = "\n\n---\n\nMy financial profile:\n" + "\n".join(
+            financial_profile
+        )
+        enhanced_query += profile_text
+
+    enhanced_query += "\n\n---\n\nPlease don't ask any follow up questions. Make reasonable assumptions and provide the best possible answer."
+
+    return enhanced_query
 
 
 def perplexity_search(query: str, api_key: str, max_retries: int = 3) -> str:
     url = "https://api.perplexity.ai/chat/completions"
 
-    system_instructions = """You are a factual financial search assistant. Answer queries precisely using *only* the provided search context. Assume reasonable details if information is missing. Provide direct, thorough answers formatted for clarity. Do not ask follow-up questions."""
+    system_instructions = """You are a factual financial search assistant. Answer queries precisely using *only* the provided search context. Assume reasonable details if information is missing. Provide direct, thorough answers formatted for clarity. Do not ask follow-up questions. Today is {current_date}."""
 
     payload = {
         "model": "sonar-reasoning-pro",
@@ -149,6 +179,7 @@ async def create_web_search_agent(api_key: str, shared_memory: ListMemory = None
     system_message = (
         f"You are a financial analyst. Today is {current_date}. Your primary function is to use the web search tool for current financial data. "
         "Provide accurate, direct answers based on search results, **always citing your sources**. "
+        "When reporting data, clearly identify any limitations or inconsistencies in the information retrieved, and prioritize the most relevant and recent information. "
         "Make reasonable assumptions for missing details rather than asking questions - no follow-up questions. "
         "Consult shared memory for relevant client profile information to tailor responses."
     )
@@ -174,14 +205,23 @@ async def create_web_search_agent(api_key: str, shared_memory: ListMemory = None
 
 async def create_code_executor_agent(work_dir: str = "coding", timeout: int = 30):
     try:
-        code_executor = LocalCommandLineCodeExecutor(work_dir=work_dir, timeout=timeout)
+        code_executor = DockerCommandLineCodeExecutor(
+            image="jupyter/scipy-notebook",
+            timeout=timeout,
+            work_dir=work_dir,
+            init_command="pip install --quiet seaborn scikit-learn",
+            auto_remove=True,
+        )
+
+        await code_executor.start()
+        await asyncio.sleep(2)
 
         code_executor_agent = CodeExecutorAgent(
             name="code_executor_agent",
             code_executor=code_executor,
             description="Code Executor Agent: Executes Python code snippets provided in markdown blocks (```python). Use this *after* the Code Writer Agent generates code to get the output/results.",
         )
-        return code_executor_agent
+        return code_executor_agent, code_executor
     except Exception as e:
         logger.exception("Error creating code executor agent: %s", e)
         raise
@@ -191,12 +231,13 @@ async def create_code_writer_agent(shared_memory: ListMemory = None):
     current_date = get_current_date()
 
     system_message = (
-        f"You are a financial code writer. Today is {current_date}. Generate clear, commented Python code **using only standard libraries** to solve financial problems. "
+        f"You are a financial code writer. Today is {current_date}. Generate clear, commented Python code using **relevant Python libraries (like Pandas, NumPy, etc.) suitable for financial analysis** to solve financial problems. "
         "Ensure code is in proper markdown blocks (```python). Include print statements for all results. "
+        "Review previous messages for available data before coding. Document key assumptions in comments. When generating financial models, output all variables and weights that inform the final recommendation. "
         "Make reasonable assumptions for missing details. Consult shared memory for client profile context if relevant for the calculation."
     )
 
-    description = "Code Writer Agent: Writes commented Python code (standard libraries only) in markdown for financial calculations. Needs code executor agent to run."
+    description = "Code Writer Agent: Writes commented Python code (using common data science libraries like Pandas, NumPy, etc.) in markdown for financial calculations. Needs code executor agent to run."
 
     model_client = OpenAIChatCompletionClient(
         model="gpt-4o", timeout=60, temperature=0.0
@@ -217,7 +258,7 @@ async def create_financial_advisor_agent(shared_memory: ListMemory = None):
     current_date = get_current_date()
 
     system_message = (
-        f"You are a professional financial advisor. Today is {current_date}. Synthesize information (from user, search, code execution if available) to provide clear, **actionable recommendations**. "
+        f"You are a professional financial advisor. Today is {current_date}. Carefully review all the messages and synthesize information (from user, search, code execution if available) to provide clear, **actionable recommendations**. "
         "**Explain your reasoning, potential risks, and limitations clearly.** Base your advice on available data, making reasonable assumptions for missing details. Do not ask follow-up questions. "
         "Consult shared memory for the client's financial profile to personalize advice."
     )
@@ -266,7 +307,7 @@ async def create_financial_team(
         perplexity_api_key, shared_memory=shared_memory
     )
     code_writer_agent = await create_code_writer_agent(shared_memory=shared_memory)
-    code_executor_agent = await create_code_executor_agent()
+    code_executor_agent, code_executor = await create_code_executor_agent()
     financial_advisor_agent = await create_financial_advisor_agent(
         shared_memory=shared_memory
     )
@@ -297,7 +338,7 @@ async def create_financial_team(
         model_client=claude_orchestrator_client,
     )
 
-    return team
+    return team, code_executor
 
 
 async def test_web_search_agent():
@@ -342,7 +383,7 @@ async def test_code_executor_agent():
     code_executor_agent = None
 
     try:
-        code_executor_agent = await create_code_executor_agent()
+        code_executor_agent, code_executor = await create_code_executor_agent()
 
         test_message = TextMessage(
             content='''Here's a Python script to calculate compound interest:
@@ -378,6 +419,12 @@ print(f"Interest Earned: ${earned_interest:,.2f}")
     except Exception as e:
         logger.exception("Error during code executor test: %s", e)
         raise
+    finally:
+        if code_executor:
+            try:
+                await code_executor.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping code executor: {e}")
 
 
 async def test_code_writer_agent():
@@ -451,30 +498,42 @@ async def test_financial_advisor_agent():
 
 async def test_financial_team():
     try:
-        team = await create_financial_team(
+        risk_tolerance = "Moderate - Balanced Growth"
+        time_horizon = "Long Term (5+ years)"
+        annual_gross_income = None
+
+        team, code_executor = await create_financial_team(
             perplexity_api_key=PERPLEXITY_API_KEY,
             anthropic_api_key=ANTHROPIC_API_KEY,
-            risk_tolerance="moderate",
-            time_horizon="25 years",
-            annual_gross_income=95000.00,
+            risk_tolerance=risk_tolerance,
+            time_horizon=time_horizon,
+            annual_gross_income=annual_gross_income,
         )
 
-        test_message = TextMessage(
-            content="""I'm 40 years old and want to retire at 65. I currently have $150,000 saved in my 401(k) and contribute 8% of my income annually with a 3% employer match. Should I adjust my contribution rate or investment allocation? Can you also project my retirement account value at retirement and calculate a safe withdrawal rate?""",
-            source="user",
+        user_query = """How should I allocate $50,000 across Vanguard ETFs VOO, VXUS, and BND? Please analyze different allocation scenarios and recommend the optimal distribution."""
+
+        enhanced_content = format_enhanced_query(
+            user_query, risk_tolerance, time_horizon, annual_gross_income
         )
+        enhanced_message = TextMessage(content=enhanced_content, source="user")
 
         token = CancellationToken()
         print("Sending query to financial team...")
 
         async for event in team.run_stream(
-            task=[test_message], cancellation_token=token
+            task=[enhanced_message], cancellation_token=token
         ):
             display_terminal.pretty_print_event(event)
 
     except Exception as e:
         logger.exception("Error during financial team test: %s", e)
         raise
+    finally:
+        if code_executor:
+            try:
+                await code_executor.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping code executor: {e}")
 
 
 async def run_all_tests():
