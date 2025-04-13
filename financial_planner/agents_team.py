@@ -26,6 +26,7 @@ from financial_planner import ANTHROPIC_API_KEY, PERPLEXITY_API_KEY, display_ter
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 
+
 def get_current_date() -> str:
     local_tz = get_localzone()
     now_aware = datetime.datetime.now(local_tz)
@@ -219,7 +220,7 @@ async def create_code_executor_agent(work_dir: str = "coding", timeout: int = 30
         code_executor_agent = CodeExecutorAgent(
             name="code_executor_agent",
             code_executor=code_executor,
-            description="Code Executor Agent: Executes Python code snippets provided in markdown blocks (```python). Use this *after* the Code Writer Agent generates code to get the output/results.",
+            description="Code Executor Agent: Executes Python code snippets provided in markdown blocks (```python). Must use this *after* the Code Writer Agent generates code to get the output/results.",
         )
         return code_executor_agent, code_executor
     except Exception as e:
@@ -235,9 +236,10 @@ async def create_code_writer_agent(shared_memory: ListMemory = None):
         "Ensure code is in proper markdown blocks (```python). Include print statements for all results. "
         "Review previous messages for available data before coding. Document key assumptions in comments. When generating financial models, output all variables and weights that inform the final recommendation. "
         "Make reasonable assumptions for missing details. Consult shared memory for client profile context if relevant for the calculation."
+        "Use the code executor agent immediately after this to run the generated code and return the results."
     )
 
-    description = "Code Writer Agent: Writes commented Python code (using common data science libraries like Pandas, NumPy, etc.) in markdown for financial calculations. Needs code executor agent to run."
+    description = "Code Writer Agent: Writes commented Python code (using common data science libraries like Pandas, NumPy, etc.) in markdown for financial calculations. Any code generated should be run next by the code executor agent to get the output/results."
 
     model_client = OpenAIChatCompletionClient(
         model="gpt-4o", timeout=60, temperature=0.0
@@ -510,7 +512,7 @@ async def test_financial_team():
             annual_gross_income=annual_gross_income,
         )
 
-        user_query = """How should I allocate $50,000 across Vanguard ETFs VOO, VXUS, and BND? Please analyze different allocation scenarios and recommend the optimal distribution."""
+        user_query = """I have $5000 to invest at a simple annual interest rate of 3.5% for 5 years. Write Python code to calculate the final value of the investment."""
 
         enhanced_content = format_enhanced_query(
             user_query, risk_tolerance, time_horizon, annual_gross_income

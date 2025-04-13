@@ -677,6 +677,7 @@ async def index():
 
 @app.post("/infer")
 async def infer(request: Request):
+    code_executor = None
     try:
         body = await request.json()
         query = body.get("query", "").strip()
@@ -748,6 +749,10 @@ async def infer(request: Request):
                              <div class='event-content'>An error occurred during analysis: {str(e)}</div>
                           </div>"""
 
+            finally:
+                if code_executor:
+                    await code_executor.stop()
+
         return StreamingResponse(event_generator(), media_type="text/html")
 
     except HTTPException as http_exc:
@@ -756,6 +761,3 @@ async def infer(request: Request):
         raise HTTPException(
             status_code=500, detail=f"An unexpected server error occurred: {str(e)}"
         )
-    finally:
-        if code_executor:
-            await code_executor.stop()
