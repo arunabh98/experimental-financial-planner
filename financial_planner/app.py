@@ -133,6 +133,7 @@ async def index():
             background: var(--card-background);
             transition: box-shadow 0.3s ease;
             padding: 2rem !important;
+            margin: 2rem !important;
         }
 
         .unified-card h4 {
@@ -471,7 +472,7 @@ async def index():
     </div>
 
     <div class="container-fluid main-section">
-        <div class="unified-card p-4 mx-auto" style="max-width: 1400px;">
+        <div class="unified-card p-4 mx-auto" style="max-width: none;">
             <div class="row g-4 g-lg-5">
                 <div class="col-lg-4">
                     <h4>Your Profile & Query</h4>

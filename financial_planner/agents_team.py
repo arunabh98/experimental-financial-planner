@@ -232,14 +232,17 @@ async def create_code_writer_agent(shared_memory: ListMemory = None):
     current_date = get_current_date()
 
     system_message = (
-        f"You are a financial code writer. Today is {current_date}. Generate clear, commented Python code using **relevant Python libraries (like Pandas, NumPy, etc.) suitable for financial analysis** to solve financial problems. "
+        f"You are a financial code writer. Today is {current_date}. Generate clear, commented Python code to solve financial problems. "
+        "**IMPORTANT CONSTRAINT: You MUST only use standard Python libraries OR libraries included in the 'jupyter/scipy-notebook' Docker image environment.** "
+        "Key available libraries include, but are not limited to: **Pandas, NumPy, SciPy, Scikit-learn, Statsmodels, Matplotlib, Seaborn, SQLAlchemy, Openpyxl, Beautifulsoup4, Bokeh, Dask, h5py, Numba, Patsy, Sympy, PyTables, Scikit-image**. "
+        "Do NOT import or use any libraries outside of standard Python and this specific pre-installed set. "
         "Ensure code is in proper markdown blocks (```python). Include print statements for all results. "
         "Review previous messages for available data before coding. Document key assumptions in comments. When generating financial models, output all variables and weights that inform the final recommendation. "
         "Make reasonable assumptions for missing details. Consult shared memory for client profile context if relevant for the calculation."
         "Use the code executor agent immediately after this to run the generated code and return the results."
     )
 
-    description = "Code Writer Agent: Writes commented Python code (using common data science libraries like Pandas, NumPy, etc.) in markdown for financial calculations. Any code generated should be run next by the code executor agent to get the output/results."
+    description = "Code Writer Agent: Writes commented Python code (using only standard Python or libraries available in jupyter/scipy-notebook like Pandas, NumPy, SciPy, etc.) in markdown for financial calculations. Any code generated should be run next by the code executor agent to get the output/results."
 
     model_client = OpenAIChatCompletionClient(
         model="gpt-4o", timeout=60, temperature=0.0
