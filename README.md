@@ -1,23 +1,3 @@
----
-title: Financial Planner
-emoji: 💰
-colorFrom: green
-colorTo: blue
-sdk: docker
-app_port: 8000
-pinned: true
-license: agpl-3.0
-short_description: AI-driven personal financial planning assistant
-tags:
-  - finance
-  - planning
-  - ai
-  - ml
-  - llm
-  - agents
-startup_duration_timeout: "10m"
----
-
 # Financial Planner
 
 **Financial Planner** is an AI-driven personal financial planning assistant designed to provide accurate, well-researched financial insights and recommendations. Leveraging a multi-agent architecture, it integrates web search, Python code generation, and secure code execution to help users make informed financial decisions.
