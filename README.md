@@ -2,6 +2,13 @@
 
 **Financial Planner** is an AI-driven personal financial planning assistant designed to provide accurate, well-researched financial insights and recommendations. Leveraging a multi-agent architecture, it integrates web search, Python code generation, and secure code execution to help users make informed financial decisions.
 
+## ⚠️ Disclaimer
+
+**IMPORTANT: This is an experimental project for testing AI agents and NOT a financial advice tool.**
+
+- All calculations and recommendations are experimental and may not be accurate
+- Consult qualified financial professionals for actual financial advice
+
 ## Features
 
 - **Multi-Agent Architecture:**  
